@@ -1,0 +1,133 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    font-family: "Noto Sans Thai", "Plus Jakarta Sans", system-ui, -apple-system, sans-serif;
+  }
+
+  .font-display {
+    font-family: "Plus Jakarta Sans", "Noto Sans Thai", system-ui, sans-serif;
+  }
+
+  .font-mono-num {
+    font-family: "IBM Plex Mono", "Noto Sans Thai", monospace;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .font-sarabun {
+    font-family: "Sarabun", "Noto Sans Thai", sans-serif;
+  }
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Official Google Sign-In Material Button styling */
+.gsi-material-button {
+  -moz-user-select: none;
+  -webkit-user-select: none;
+  -ms-user-select: none;
+  background-color: #ffffff;
+  background-image: none;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  box-sizing: border-box;
+  color: #0f172a;
+  cursor: pointer;
+  font-family: "Plus Jakarta Sans", "Noto Sans Thai", sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  height: 38px;
+  letter-spacing: 0.1px;
+  outline: none;
+  overflow: hidden;
+  padding: 0 14px;
+  position: relative;
+  text-align: center;
+  transition: background-color 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+  vertical-align: middle;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.gsi-material-button:hover {
+  background-color: #f8fafc;
+  border-color: #94a3b8;
+}
+
+.gsi-material-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.gsi-material-button-icon {
+  height: 18px;
+  width: 18px;
+  min-width: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* A4 Print Layout for official Thai government asset reports */
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 12mm 14mm;
+  }
+
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+    font-family: "Sarabun", "Noto Sans Thai", sans-serif !important;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
+  .print-only {
+    display: block !important;
+  }
+
+  .print-surface {
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    width: 100% !important;
+    max-width: none !important;
+  }
+
+  table {
+    page-break-inside: auto;
+  }
+
+  .print-surface table {
+    font-size: 9.5px !important;
+  }
+
+  .print-surface th,
+  .print-surface td {
+    padding: 3px 4px !important;
+  }
+
+  tr {
+    page-break-inside: avoid;
+    page-break-after: auto;
+  }
+
+  .print-page-break {
+    page-break-after: always;
+    break-after: page;
+  }
+
+  .print-page-break:last-child {
+    page-break-after: auto;
+    break-after: auto;
+  }
+}
