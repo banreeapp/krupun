@@ -1,29 +1,77 @@
-import { useState } from 'react';
-import { Plus, RotateCcw, Save, Trash2 } from 'lucide-react';
-import { AgencySettings, ReferenceConfig } from '../types/asset';
-import { getFiscalYearWindow } from '../utils/depreciation';
+import { useEffect, useRef, useState } from 'react';
+import {
+  CheckCircle2,
+  Download,
+  Plus,
+  RotateCcw,
+  Save,
+  ShieldAlert,
+  Trash2,
+  Upload,
+} from 'lucide-react';
+import {
+  AgencySettings,
+  AssetItem,
+  MaintenanceRecord,
+  ReferenceConfig,
+} from '../types/asset';
+import {
+  formatInt,
+  formatThaiDateLong,
+  getFiscalYearWindow,
+} from '../utils/depreciation';
+import {
+  BackupValidationSuccess,
+  exportSystemBackupJson,
+  parseAndValidateBackupJson,
+} from '../utils/backupRestore';
 import { ConfirmModal } from './ConfirmModal';
 
 interface SettingsAndReferenceViewProps {
   settings: AgencySettings;
   reference: ReferenceConfig;
+  assets: AssetItem[];
+  maintenance: MaintenanceRecord[];
   onSaveSettings: (next: AgencySettings) => void;
   onSaveReference: (next: ReferenceConfig) => void;
+  onRestoreBackup: (data: {
+    settings: AgencySettings;
+    reference: ReferenceConfig;
+    assets: AssetItem[];
+    maintenance: MaintenanceRecord[];
+  }) => void;
   onResetToDefaults: () => void;
 }
 
 export function SettingsAndReferenceView({
   settings,
   reference,
+  assets,
+  maintenance,
   onSaveSettings,
   onSaveReference,
+  onRestoreBackup,
   onResetToDefaults,
 }: SettingsAndReferenceViewProps) {
   const [form, setForm] = useState<AgencySettings>(settings);
   const [refForm, setRefForm] = useState<ReferenceConfig>(reference);
   const [newLocation, setNewLocation] = useState('');
-  const [savedNotice, setSavedNotice] = useState(false);
+  const [savedNotice, setSavedNotice] = useState('');
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+
+  // JSON Backup & Restore state
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [backupError, setBackupError] = useState('');
+  const [pendingRestore, setPendingRestore] =
+    useState<BackupValidationSuccess | null>(null);
+
+  useEffect(() => {
+    setForm(settings);
+  }, [settings]);
+
+  useEffect(() => {
+    setRefForm(reference);
+  }, [reference]);
 
   const fyWindow = getFiscalYearWindow(form.fiscalYear);
 
@@ -31,8 +79,52 @@ export function SettingsAndReferenceView({
     e.preventDefault();
     onSaveSettings(form);
     onSaveReference(refForm);
-    setSavedNotice(true);
-    setTimeout(() => setSavedNotice(false), 3000);
+    setSavedNotice(
+      'บันทึกการตั้งค่าและรายการอ้างอิงเรียบร้อยแล้ว ค่าเสื่อมราคาและรายงานทั้งหมดถูกคำนวณใหม่ทันที'
+    );
+    setTimeout(() => setSavedNotice(''), 3500);
+  };
+
+  const handleExportBackup = () => {
+    setBackupError('');
+    exportSystemBackupJson({
+      settings: form,
+      reference: refForm,
+      assets,
+      maintenance,
+    });
+    setSavedNotice(
+      `ดาวน์โหลดไฟล์สำรองข้อมูล (.json) เรียบร้อยแล้ว (ครุภัณฑ์ ${formatInt(
+        assets.length
+      )} รายการ, ประวัติซ่อม ${formatInt(maintenance.length)} รายการ)`
+    );
+    setTimeout(() => setSavedNotice(''), 4000);
+  };
+
+  const handleSelectBackupFile = async (
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+
+    setBackupError('');
+    if (file.size > 20 * 1024 * 1024) {
+      setBackupError('ไฟล์มีขนาดใหญ่เกิน 20 MB กรุณาตรวจสอบไฟล์สำรองข้อมูล');
+      return;
+    }
+
+    try {
+      const text = await file.text();
+      const validated = parseAndValidateBackupJson(text, form, refForm);
+      if (!validated.ok) {
+        setBackupError(validated.error);
+        return;
+      }
+      setPendingRestore(validated);
+    } catch {
+      setBackupError('ไม่สามารถอ่านไฟล์ที่เลือกได้ กรุณาลองใหม่อีกครั้ง');
+    }
   };
 
   const handleAddLocation = () => {
@@ -93,8 +185,9 @@ export function SettingsAndReferenceView({
       </div>
 
       {savedNotice && (
-        <div className="px-4 py-2.5 bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs font-medium rounded-lg">
-          บันทึกการตั้งค่าและรายการอ้างอิงเรียบร้อยแล้ว ค่าเสื่อมราคาและรายงานทั้งหมดถูกคำนวณใหม่ทันที
+        <div className="flex items-center gap-2 px-4 py-2.5 bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs font-medium rounded-lg">
+          <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
+          <span>{savedNotice}</span>
         </div>
       )}
 
@@ -450,6 +543,140 @@ export function SettingsAndReferenceView({
           </div>
         </div>
       </div>
+
+      {/* Section 4: JSON Backup & Restore */}
+      <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-200 pb-3">
+          <div>
+            <h2 className="text-sm font-semibold text-slate-900">
+              4. สำรองข้อมูลทั้งหมดและนำข้อมูลกลับมาใช้ (ไฟล์ .json)
+            </h2>
+            <p className="text-xs text-slate-500 mt-0.5">
+              บันทึกข้อมูลทั้งหมดของระบบ (ตั้งค่าหน่วยงาน, ผู้ลงนาม, รายการอ้างอิง, ทะเบียนครุภัณฑ์ และประวัติซ่อมบำรุง) เพื่อย้ายเครื่องหรือสำรองเก็บไว้ใช้งานแบบออฟไลน์
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".json,application/json"
+              onChange={handleSelectBackupFile}
+              className="hidden"
+            />
+            <button
+              type="button"
+              onClick={handleExportBackup}
+              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-emerald-900 rounded-lg hover:bg-emerald-800 whitespace-nowrap"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>สำรองข้อมูลทั้งหมด (.json)</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setBackupError('');
+                fileInputRef.current?.click();
+              }}
+              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-medium text-slate-800 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 whitespace-nowrap"
+            >
+              <Upload className="w-3.5 h-3.5 text-emerald-800" />
+              <span>นำเข้าข้อมูลจากไฟล์ (.json)</span>
+            </button>
+          </div>
+        </div>
+
+        {backupError && (
+          <div className="flex items-start gap-2 px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-800">
+            <ShieldAlert className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+            <div>
+              <div className="font-semibold">
+                ไม่สามารถนำเข้าไฟล์สำรองข้อมูลได้
+              </div>
+              <div className="mt-0.5">{backupError}</div>
+            </div>
+          </div>
+        )}
+
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+          <div className="bg-slate-50 border border-slate-200 rounded-lg px-3.5 py-2.5">
+            <div className="text-[11px] text-slate-500">ครุภัณฑ์ในทะเบียน</div>
+            <div className="text-sm font-semibold text-slate-900 font-mono-num mt-0.5">
+              {formatInt(assets.length)} รายการ
+            </div>
+          </div>
+          <div className="bg-slate-50 border border-slate-200 rounded-lg px-3.5 py-2.5">
+            <div className="text-[11px] text-slate-500">ประวัติการซ่อมบำรุง</div>
+            <div className="text-sm font-semibold text-slate-900 font-mono-num mt-0.5">
+              {formatInt(maintenance.length)} รายการ
+            </div>
+          </div>
+          <div className="bg-slate-50 border border-slate-200 rounded-lg px-3.5 py-2.5">
+            <div className="text-[11px] text-slate-500">ประเภทครุภัณฑ์ (APC)</div>
+            <div className="text-sm font-semibold text-slate-900 font-mono-num mt-0.5">
+              {formatInt(refForm.categories.length)} หมวด
+            </div>
+          </div>
+          <div className="bg-slate-50 border border-slate-200 rounded-lg px-3.5 py-2.5">
+            <div className="text-[11px] text-slate-500">สถานที่/ห้องใช้งาน</div>
+            <div className="text-sm font-semibold text-slate-900 font-mono-num mt-0.5">
+              {formatInt(refForm.locations.length)} แห่ง
+            </div>
+          </div>
+        </div>
+
+        <p className="text-[11px] text-slate-500">
+          หมายเหตุ: ระบบจะตรวจสอบความถูกต้องของโครงสร้างไฟล์และแสดงสรุปข้อมูลให้ยืนยันก่อนนำเข้าทุกครั้ง และไฟล์สำรองจะไม่เก็บรหัสผ่านหรือสิทธิ์เชื่อมต่อบัญชี Google เพื่อความปลอดภัย
+        </p>
+      </div>
+
+      {/* Restore Confirmation Modal */}
+      <ConfirmModal
+        open={pendingRestore !== null}
+        title="ยืนยันการนำเข้าข้อมูลจากไฟล์สำรอง (.json)"
+        description="ตรวจสอบรายละเอียดข้อมูลจากไฟล์สำรองที่ผ่านการตรวจสอบโครงสร้างแล้ว การยืนยันจะแทนที่ข้อมูลทั้งหมดในหน้าเว็บปัจจุบันด้วยข้อมูลจากไฟล์นี้"
+        details={
+          pendingRestore
+            ? [
+                `หน่วยงาน: ${pendingRestore.summary.agencyName}`,
+                `ปีงบประมาณ: ${pendingRestore.summary.fiscalYear}`,
+                ...(pendingRestore.summary.exportedAt
+                  ? [
+                      `วันที่สำรองไฟล์: ${formatThaiDateLong(
+                        pendingRestore.summary.exportedAt.slice(0, 10)
+                      )} (${pendingRestore.summary.exportedAt.slice(11, 16)} น.)`,
+                    ]
+                  : []),
+                `ทะเบียนครุภัณฑ์: ${formatInt(
+                  pendingRestore.summary.assetCount
+                )} รายการ`,
+                `ประวัติการซ่อมบำรุง: ${formatInt(
+                  pendingRestore.summary.maintenanceCount
+                )} รายการ`,
+                `หมวดหมู่ APC: ${formatInt(
+                  pendingRestore.summary.categoryCount
+                )} หมวด · สถานที่: ${formatInt(
+                  pendingRestore.summary.locationCount
+                )} แห่ง`,
+                ...pendingRestore.summary.warnings.map((w) => `หมายเหตุ: ${w}`),
+              ]
+            : undefined
+        }
+        confirmLabel="ยืนยันนำเข้าข้อมูลจากไฟล์"
+        onConfirm={() => {
+          if (!pendingRestore) return;
+          const summary = pendingRestore.summary;
+          onRestoreBackup(pendingRestore.data);
+          setPendingRestore(null);
+          setSavedNotice(
+            `นำเข้าข้อมูลจากไฟล์สำรองสำเร็จ (ครุภัณฑ์ ${formatInt(
+              summary.assetCount
+            )} รายการ, ประวัติซ่อม ${formatInt(summary.maintenanceCount)} รายการ)`
+          );
+          setTimeout(() => setSavedNotice(''), 5000);
+        }}
+        onCancel={() => setPendingRestore(null)}
+      />
 
       <ConfirmModal
         open={showResetConfirm}

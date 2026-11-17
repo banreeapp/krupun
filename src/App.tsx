@@ -352,6 +352,21 @@ export default function App() {
     if (pulled.maintenance) setMaintenance(pulled.maintenance);
   };
 
+  const handleRestoreBackup = (data: {
+    settings: AgencySettings;
+    reference: ReferenceConfig;
+    assets: AssetItem[];
+    maintenance: MaintenanceRecord[];
+  }) => {
+    setSettings(data.settings);
+    setReference(data.reference);
+    setAssets(data.assets);
+    setMaintenance(data.maintenance);
+    if (data.assets[0]) {
+      setSelectedAssetId(data.assets[0].id);
+    }
+  };
+
   const handleResetDefaults = () => {
     setSettings(DEFAULT_SETTINGS);
     setReference(DEFAULT_REFERENCE);
@@ -687,8 +702,11 @@ export default function App() {
             <SettingsAndReferenceView
               settings={settings}
               reference={reference}
+              assets={assets}
+              maintenance={maintenance}
               onSaveSettings={setSettings}
               onSaveReference={setReference}
+              onRestoreBackup={handleRestoreBackup}
               onResetToDefaults={handleResetDefaults}
             />
           )}
