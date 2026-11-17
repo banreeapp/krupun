@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { User } from 'firebase/auth';
 import {
   BarChart3,
@@ -10,6 +10,7 @@ import {
   FileSpreadsheet,
   FileText,
   LayoutDashboard,
+  Lock,
   Menu,
   Package,
   Plus,
@@ -37,12 +38,18 @@ import {
 } from './data/defaultData';
 import { computeAssetAlerts } from './utils/depreciation';
 import {
+  clearCachedToken,
   getAccessToken,
   googleSignIn,
   initAuth,
   logout,
 } from './services/googleAuth';
-import { SpreadsheetMetadata } from './services/googleSheets';
+import {
+  SheetsApiError,
+  SheetsSyncConfig,
+  SpreadsheetMetadata,
+  syncAllToGoogleSheets,
+} from './services/googleSheets';
 import { OverviewView } from './components/OverviewView';
 import { RegistryView } from './components/RegistryView';
 import { MaintenanceView } from './components/MaintenanceView';
@@ -58,6 +65,7 @@ import { SettingsAndReferenceView } from './components/SettingsAndReferenceView'
 import { AssetFormModal } from './components/AssetFormModal';
 import { MaintenanceFormModal } from './components/MaintenanceFormModal';
 import { GoogleSheetsModal } from './components/GoogleSheetsModal';
+import { ConfirmModal } from './components/ConfirmModal';
 
 const STORAGE_KEYS = {
   SETTINGS: 'thai_asset_settings_v1',
@@ -65,6 +73,13 @@ const STORAGE_KEYS = {
   ASSETS: 'thai_asset_items_v1',
   MAINTENANCE: 'thai_asset_maintenance_v1',
   SHEET_META: 'thai_asset_sheet_meta_v1',
+  SHEETS_SYNC_CONFIG: 'thai_asset_sheets_sync_v1',
+};
+
+const DEFAULT_SHEETS_SYNC_CONFIG: SheetsSyncConfig = {
+  locked: false,
+  autoSyncEnabled: false,
+  intervalSeconds: 30,
 };
 
 function loadFromStorage<T>(key: string, fallback: T): T {
@@ -117,6 +132,16 @@ export default function App() {
     useState<SpreadsheetMetadata | null>(() =>
       loadFromStorage(STORAGE_KEYS.SHEET_META, null)
     );
+  const [sheetsSyncConfig, setSheetsSyncConfig] = useState<SheetsSyncConfig>(
+    () => ({
+      ...DEFAULT_SHEETS_SYNC_CONFIG,
+      ...loadFromStorage(
+        STORAGE_KEYS.SHEETS_SYNC_CONFIG,
+        DEFAULT_SHEETS_SYNC_CONFIG
+      ),
+      intervalSeconds: 30,
+    })
+  );
 
   // Selected asset for Individual Card view & QR Code Studio
   const [selectedAssetId, setSelectedAssetId] = useState<string>(
@@ -159,6 +184,40 @@ export default function App() {
   const [hasSheetsScope, setHasSheetsScope] = useState(false);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
 
+  // In-memory 30-second auto-sync state (must be confirmed in current browser session)
+  const [sessionAutoSyncConfirmed, setSessionAutoSyncConfirmed] =
+    useState(false);
+  const [showResumeAutoSyncConfirm, setShowResumeAutoSyncConfirm] =
+    useState(false);
+  const [isAutoSyncing, setIsAutoSyncing] = useState(false);
+  const [lastSheetsSyncAt, setLastSheetsSyncAt] = useState<string | null>(null);
+  const [lastSheetsSyncError, setLastSheetsSyncError] = useState<string | null>(
+    null
+  );
+  const [nextAutoSyncAt, setNextAutoSyncAt] = useState<number | null>(null);
+  const isSyncingRef = useRef(false);
+
+  const latestSyncRef = useRef({
+    settings,
+    reference,
+    assets,
+    maintenance,
+    connectedSheet,
+    accessToken,
+    hasSheetsScope,
+    sheetsSyncConfig,
+  });
+  latestSyncRef.current = {
+    settings,
+    reference,
+    assets,
+    maintenance,
+    connectedSheet,
+    accessToken,
+    hasSheetsScope,
+    sheetsSyncConfig,
+  };
+
   useEffect(() => {
     const unsub = initAuth(
       (authUser, token, scopeGranted) => {
@@ -172,6 +231,8 @@ export default function App() {
         setAccessToken(null);
         setHasSheetsScope(false);
         setNeedsAuth(true);
+        setSessionAutoSyncConfirmed(false);
+        setNextAutoSyncAt(null);
       }
     );
     return () => unsub();
@@ -200,6 +261,13 @@ export default function App() {
       JSON.stringify(connectedSheet)
     );
   }, [connectedSheet]);
+
+  useEffect(() => {
+    localStorage.setItem(
+      STORAGE_KEYS.SHEETS_SYNC_CONFIG,
+      JSON.stringify(sheetsSyncConfig)
+    );
+  }, [sheetsSyncConfig]);
 
   const alerts = useMemo(
     () => computeAssetAlerts(assets, maintenance),
@@ -309,6 +377,149 @@ export default function App() {
     );
   };
 
+  const executeSheetsSyncNow = useCallback(async () => {
+    const current = latestSyncRef.current;
+    if (
+      !current.accessToken ||
+      !current.hasSheetsScope ||
+      !current.connectedSheet ||
+      isSyncingRef.current
+    ) {
+      return;
+    }
+
+    isSyncingRef.current = true;
+    setIsAutoSyncing(true);
+    setLastSheetsSyncError(null);
+    try {
+      const updated = await syncAllToGoogleSheets(
+        current.accessToken,
+        current.connectedSheet.spreadsheetId,
+        {
+          settings: current.settings,
+          reference: current.reference,
+          assets: current.assets,
+          maintenance: current.maintenance,
+        },
+        { knownMetadata: current.connectedSheet }
+      );
+      setConnectedSheet(updated);
+      const nowLabel =
+        new Date().toLocaleTimeString('th-TH', { hour12: false }) + ' น.';
+      setLastSheetsSyncAt(nowLabel);
+      setNextAutoSyncAt(
+        Date.now() + current.sheetsSyncConfig.intervalSeconds * 1000
+      );
+    } catch (err) {
+      const msg =
+        err instanceof Error ? err.message : 'ไม่สามารถบันทึกลง Google Sheets ได้';
+      const lower = msg.toLowerCase();
+      if (err instanceof SheetsApiError && err.status === 401) {
+        clearCachedToken();
+        setAccessToken(null);
+        setHasSheetsScope(false);
+        setNeedsAuth(true);
+        setSessionAutoSyncConfirmed(false);
+        setNextAutoSyncAt(null);
+        setLastSheetsSyncError(
+          'สิทธิ์การเข้าใช้งาน Google หมดอายุ กรุณาเข้าสู่ระบบใหม่อีกครั้งเพื่อบันทึกต่อ'
+        );
+      } else if (
+        lower.includes('insufficient authentication scopes') ||
+        lower.includes('insufficient permission') ||
+        msg.includes('ACCESS_TOKEN_SCOPE_INSUFFICIENT')
+      ) {
+        setHasSheetsScope(false);
+        setSessionAutoSyncConfirmed(false);
+        setNextAutoSyncAt(null);
+        setLastSheetsSyncError(
+          'บัญชี Google ยังไม่ได้อนุญาตสิทธิ์แก้ไข Google Sheets'
+        );
+      } else {
+        setLastSheetsSyncError(msg);
+      }
+      throw err;
+    } finally {
+      isSyncingRef.current = false;
+      setIsAutoSyncing(false);
+    }
+  }, []);
+
+  // Periodic auto-save to Google Sheets every 30 seconds once locked & confirmed
+  useEffect(() => {
+    const canRunAutoSync =
+      sheetsSyncConfig.autoSyncEnabled &&
+      sessionAutoSyncConfirmed &&
+      !needsAuth &&
+      Boolean(accessToken) &&
+      hasSheetsScope &&
+      Boolean(connectedSheet);
+
+    if (!canRunAutoSync) {
+      setNextAutoSyncAt(null);
+      return;
+    }
+
+    const intervalMs = sheetsSyncConfig.intervalSeconds * 1000;
+    setNextAutoSyncAt(Date.now() + intervalMs);
+
+    const timer = window.setInterval(() => {
+      void executeSheetsSyncNow().catch(() => {
+        // Error state already captured in lastSheetsSyncError
+      });
+    }, intervalMs);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [
+    sheetsSyncConfig.autoSyncEnabled,
+    sheetsSyncConfig.intervalSeconds,
+    sessionAutoSyncConfirmed,
+    needsAuth,
+    accessToken,
+    hasSheetsScope,
+    connectedSheet?.spreadsheetId,
+    executeSheetsSyncNow,
+  ]);
+
+  const handleLockAndStartAutoSync = async () => {
+    if (!connectedSheet) return;
+    setSheetsSyncConfig((prev) => ({
+      ...prev,
+      locked: true,
+      autoSyncEnabled: true,
+    }));
+    setSessionAutoSyncConfirmed(true);
+    await executeSheetsSyncNow();
+  };
+
+  const handleLockOnly = () => {
+    setSheetsSyncConfig((prev) => ({
+      ...prev,
+      locked: true,
+    }));
+  };
+
+  const handleUnlockSheetsConfig = () => {
+    setSheetsSyncConfig((prev) => ({
+      ...prev,
+      locked: false,
+      autoSyncEnabled: false,
+    }));
+    setSessionAutoSyncConfirmed(false);
+    setNextAutoSyncAt(null);
+  };
+
+  const handlePauseAutoSync = () => {
+    setSheetsSyncConfig((prev) => ({
+      ...prev,
+      autoSyncEnabled: false,
+    }));
+    setSessionAutoSyncConfirmed(false);
+    setNextAutoSyncAt(null);
+  };
+
   const handleGoogleSignIn = async () => {
     setIsLoggingIn(true);
     try {
@@ -317,6 +528,15 @@ export default function App() {
       setAccessToken(result.accessToken);
       setHasSheetsScope(result.hasSheetsScope);
       setNeedsAuth(false);
+      setLastSheetsSyncError(null);
+      if (
+        sheetsSyncConfig.autoSyncEnabled &&
+        connectedSheet &&
+        result.hasSheetsScope &&
+        !sessionAutoSyncConfirmed
+      ) {
+        setShowResumeAutoSyncConfirm(true);
+      }
     } finally {
       setIsLoggingIn(false);
     }
@@ -328,6 +548,9 @@ export default function App() {
     setAccessToken(null);
     setHasSheetsScope(false);
     setNeedsAuth(true);
+    setSessionAutoSyncConfirmed(false);
+    setShowResumeAutoSyncConfirm(false);
+    setNextAutoSyncAt(null);
   };
 
   const handleApplyPulledData = (pulled: {
@@ -440,9 +663,14 @@ export default function App() {
               <span className="truncate">
                 {!needsAuth && getAccessToken()
                   ? connectedSheet?.title || 'Google Sheets พร้อมใช้งาน'
+                  : connectedSheet && sheetsSyncConfig.locked
+                  ? `${connectedSheet.title} (รอเข้าสู่ระบบ)`
                   : 'เชื่อมต่อ Google Sheets'}
               </span>
             </span>
+            {sheetsSyncConfig.locked && (
+              <Lock className="w-3.5 h-3.5 text-emerald-800 shrink-0" />
+            )}
           </button>
         </div>
       </aside>
@@ -539,9 +767,14 @@ export default function App() {
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 whitespace-nowrap shrink-0"
             >
               <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-800" />
+              {sheetsSyncConfig.locked && (
+                <Lock className="w-3 h-3 text-emerald-800" />
+              )}
               <span className="hidden md:inline">
                 {!needsAuth && accessToken
-                  ? 'Google Sheets'
+                  ? sheetsSyncConfig.autoSyncEnabled && sessionAutoSyncConfirmed
+                    ? `Sheets (ทุก ${sheetsSyncConfig.intervalSeconds} วิ)`
+                    : 'Google Sheets'
                   : 'เชื่อมต่อ Google Sheets'}
               </span>
             </button>
@@ -708,6 +941,29 @@ export default function App() {
               onSaveReference={setReference}
               onRestoreBackup={handleRestoreBackup}
               onResetToDefaults={handleResetDefaults}
+              googleUser={user}
+              needsAuth={needsAuth}
+              hasSheetsScope={hasSheetsScope}
+              isLoggingIn={isLoggingIn}
+              onGoogleSignIn={handleGoogleSignIn}
+              onOpenSheetsModal={() => setSheetsModalOpen(true)}
+              connectedSheet={connectedSheet}
+              sheetsSyncConfig={sheetsSyncConfig}
+              sessionAutoSyncConfirmed={sessionAutoSyncConfirmed}
+              isAutoSyncing={isAutoSyncing}
+              lastSheetsSyncAt={lastSheetsSyncAt}
+              lastSheetsSyncError={lastSheetsSyncError}
+              onSyncNow={async () => {
+                if (sessionAutoSyncConfirmed) {
+                  try {
+                    await executeSheetsSyncNow();
+                  } catch {
+                    // error already captured in lastSheetsSyncError
+                  }
+                } else {
+                  setSheetsModalOpen(true);
+                }
+              }}
             />
           )}
         </main>
@@ -753,11 +1009,49 @@ export default function App() {
         onSignOut={handleGoogleSignOut}
         connectedSheet={connectedSheet}
         onSetConnectedSheet={setConnectedSheet}
+        sheetsSyncConfig={sheetsSyncConfig}
+        sessionAutoSyncConfirmed={sessionAutoSyncConfirmed}
+        isAutoSyncing={isAutoSyncing}
+        lastSheetsSyncAt={lastSheetsSyncAt}
+        lastSheetsSyncError={lastSheetsSyncError}
+        nextAutoSyncAt={nextAutoSyncAt}
+        onLockAndStartAutoSync={handleLockAndStartAutoSync}
+        onLockOnly={handleLockOnly}
+        onUnlockSheetsConfig={handleUnlockSheetsConfig}
+        onPauseAutoSync={handlePauseAutoSync}
+        onSyncNow={executeSheetsSyncNow}
         settings={settings}
         reference={reference}
         assets={assets}
         maintenance={maintenance}
         onApplyPulledData={handleApplyPulledData}
+      />
+
+      <ConfirmModal
+        open={showResumeAutoSyncConfirm && connectedSheet !== null}
+        title={`ยืนยันการบันทึกข้อมูลลง Google Sheets ทุก ${sheetsSyncConfig.intervalSeconds} วินาที`}
+        description={`ตรวจพบการตั้งค่าล็อคไฟล์ "${connectedSheet?.title || ''}" และเปิดบันทึกอัตโนมัติไว้ ต้องการเริ่มเขียนข้อมูลล่าสุดลง Google Sheets ทุก ${sheetsSyncConfig.intervalSeconds} วินาทีในเซสชันนี้ต่อหรือไม่`}
+        details={[
+          `ไฟล์เป้าหมาย: ${connectedSheet?.title || ''} (${connectedSheet?.spreadsheetId || ''})`,
+          `จำนวนข้อมูลปัจจุบัน: ครุภัณฑ์ ${assets.length} รายการ และประวัติซ่อม ${maintenance.length} รายการ`,
+          'การยืนยันจะอัปเดตข้อมูลทั้ง 7 แท็บใน Google Sheets ทันทีและทำซ้ำทุก 30 วินาที',
+        ]}
+        confirmLabel={`ยืนยันบันทึกทุก ${sheetsSyncConfig.intervalSeconds} วินาที`}
+        cancelLabel="ยังไม่บันทึกอัตโนมัติ"
+        loading={isAutoSyncing}
+        onConfirm={async () => {
+          setShowResumeAutoSyncConfirm(false);
+          setSessionAutoSyncConfirmed(true);
+          try {
+            await executeSheetsSyncNow();
+          } catch {
+            // error already stored in lastSheetsSyncError
+          }
+        }}
+        onCancel={() => {
+          setShowResumeAutoSyncConfirm(false);
+          setSessionAutoSyncConfirmed(false);
+        }}
       />
     </div>
   );

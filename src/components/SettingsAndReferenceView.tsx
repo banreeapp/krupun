@@ -1,8 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
+import { User } from 'firebase/auth';
 import {
   CheckCircle2,
+  Clock,
   Download,
+  ExternalLink,
+  FileSpreadsheet,
+  Lock,
   Plus,
+  RefreshCw,
   RotateCcw,
   Save,
   ShieldAlert,
@@ -25,6 +31,10 @@ import {
   exportSystemBackupJson,
   parseAndValidateBackupJson,
 } from '../utils/backupRestore';
+import {
+  SheetsSyncConfig,
+  SpreadsheetMetadata,
+} from '../services/googleSheets';
 import { ConfirmModal } from './ConfirmModal';
 
 interface SettingsAndReferenceViewProps {
@@ -41,6 +51,19 @@ interface SettingsAndReferenceViewProps {
     maintenance: MaintenanceRecord[];
   }) => void;
   onResetToDefaults: () => void;
+  googleUser: User | null;
+  needsAuth: boolean;
+  hasSheetsScope: boolean;
+  isLoggingIn: boolean;
+  onGoogleSignIn: () => Promise<void>;
+  onOpenSheetsModal: () => void;
+  connectedSheet: SpreadsheetMetadata | null;
+  sheetsSyncConfig: SheetsSyncConfig;
+  sessionAutoSyncConfirmed: boolean;
+  isAutoSyncing: boolean;
+  lastSheetsSyncAt: string | null;
+  lastSheetsSyncError: string | null;
+  onSyncNow: () => Promise<void>;
 }
 
 export function SettingsAndReferenceView({
@@ -52,6 +75,19 @@ export function SettingsAndReferenceView({
   onSaveReference,
   onRestoreBackup,
   onResetToDefaults,
+  googleUser,
+  needsAuth,
+  hasSheetsScope,
+  isLoggingIn,
+  onGoogleSignIn,
+  onOpenSheetsModal,
+  connectedSheet,
+  sheetsSyncConfig,
+  sessionAutoSyncConfirmed,
+  isAutoSyncing,
+  lastSheetsSyncAt,
+  lastSheetsSyncError,
+  onSyncNow,
 }: SettingsAndReferenceViewProps) {
   const [form, setForm] = useState<AgencySettings>(settings);
   const [refForm, setRefForm] = useState<ReferenceConfig>(reference);
@@ -628,6 +664,159 @@ export function SettingsAndReferenceView({
         <p className="text-[11px] text-slate-500">
           หมายเหตุ: ระบบจะตรวจสอบความถูกต้องของโครงสร้างไฟล์และแสดงสรุปข้อมูลให้ยืนยันก่อนนำเข้าทุกครั้ง และไฟล์สำรองจะไม่เก็บรหัสผ่านหรือสิทธิ์เชื่อมต่อบัญชี Google เพื่อความปลอดภัย
         </p>
+      </div>
+
+      {/* Section 5: Google Sheets Connection, Lock & 30s Auto-Sync */}
+      <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-200 pb-3">
+          <div>
+            <h2 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
+              <FileSpreadsheet className="w-4 h-4 text-emerald-800 shrink-0" />
+              <span>
+                5. เชื่อมต่อฐานข้อมูล Google Sheets และบันทึกอัตโนมัติทุก{' '}
+                {sheetsSyncConfig.intervalSeconds} วินาที
+              </span>
+            </h2>
+            <p className="text-xs text-slate-500 mt-0.5">
+              ลงชื่อเข้าใช้บัญชี Google เลือกหรือสร้างไฟล์ Google Sheets ล็อคการตั้งค่าเชื่อมต่อ และเปิดบันทึกข้อมูลลง Sheets อัตโนมัติทุก {sheetsSyncConfig.intervalSeconds} วินาที
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            {needsAuth ? (
+              <button
+                type="button"
+                onClick={onGoogleSignIn}
+                disabled={isLoggingIn}
+                className="gsi-material-button"
+              >
+                <div className="gsi-material-button-icon">
+                  <svg
+                    version="1.1"
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 48 48"
+                    style={{ display: 'block' }}
+                  >
+                    <path
+                      fill="#EA4335"
+                      d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"
+                    />
+                    <path
+                      fill="#4285F4"
+                      d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"
+                    />
+                    <path
+                      fill="#FBBC05"
+                      d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"
+                    />
+                    <path
+                      fill="#34A853"
+                      d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"
+                    />
+                    <path fill="none" d="M0 0h48v48H0z" />
+                  </svg>
+                </div>
+                <span>
+                  {isLoggingIn ? 'กำลังเข้าสู่ระบบ...' : 'Sign in with Google'}
+                </span>
+              </button>
+            ) : (
+              connectedSheet &&
+              hasSheetsScope && (
+                <button
+                  type="button"
+                  disabled={isAutoSyncing}
+                  onClick={onSyncNow}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium text-slate-800 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 whitespace-nowrap disabled:opacity-60"
+                >
+                  <RefreshCw
+                    className={`w-3.5 h-3.5 text-emerald-800 ${
+                      isAutoSyncing ? 'animate-spin' : ''
+                    }`}
+                  />
+                  <span>บันทึกทันที</span>
+                </button>
+              )
+            )}
+
+            <button
+              type="button"
+              onClick={onOpenSheetsModal}
+              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-emerald-900 rounded-lg hover:bg-emerald-800 whitespace-nowrap"
+            >
+              <Lock className="w-3.5 h-3.5" />
+              <span>จัดการเชื่อมต่อ / ล็อค / ตั้งเวลา 30 วิ</span>
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+          <div className="bg-slate-50 border border-slate-200 rounded-lg px-3.5 py-2.5">
+            <div className="text-[11px] text-slate-500">บัญชี Google</div>
+            <div className="text-xs font-semibold text-slate-900 mt-0.5 truncate">
+              {!needsAuth && googleUser
+                ? `${googleUser.displayName || googleUser.email}`
+                : 'ยังไม่ได้เข้าสู่ระบบ'}
+            </div>
+          </div>
+
+          <div className="bg-slate-50 border border-slate-200 rounded-lg px-3.5 py-2.5">
+            <div className="text-[11px] text-slate-500">
+              ไฟล์ Google Sheets ปลายทาง
+            </div>
+            <div className="text-xs font-semibold text-slate-900 mt-0.5 flex items-center gap-1.5 truncate">
+              {sheetsSyncConfig.locked && (
+                <Lock className="w-3.5 h-3.5 text-emerald-800 shrink-0" />
+              )}
+              <span className="truncate">
+                {connectedSheet ? connectedSheet.title : 'ยังไม่ได้เลือกไฟล์'}
+              </span>
+              {connectedSheet && (
+                <a
+                  href={connectedSheet.spreadsheetUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-emerald-800 hover:underline shrink-0"
+                  title="เปิดใน Google Sheets"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                </a>
+              )}
+            </div>
+          </div>
+
+          <div className="bg-slate-50 border border-slate-200 rounded-lg px-3.5 py-2.5">
+            <div className="text-[11px] text-slate-500">
+              ล็อค &amp; บันทึกอัตโนมัติ (30 วินาที)
+            </div>
+            <div className="text-xs font-semibold text-slate-900 mt-0.5 flex items-center gap-1.5">
+              <Clock className="w-3.5 h-3.5 text-emerald-800 shrink-0" />
+              <span>
+                {sheetsSyncConfig.autoSyncEnabled && sessionAutoSyncConfirmed && !needsAuth
+                  ? `ทำงานทุก ${sheetsSyncConfig.intervalSeconds} วิ`
+                  : sheetsSyncConfig.locked
+                  ? sheetsSyncConfig.autoSyncEnabled
+                    ? 'ล็อคแล้ว · รอเข้าสู่ระบบ/ยืนยัน'
+                    : 'ล็อคไฟล์แล้ว (ปิดบันทึกอัตโนมัติ)'
+                  : 'ยังไม่ล็อค / ปิดอยู่'}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {(lastSheetsSyncAt || lastSheetsSyncError) && (
+          <div className="text-xs text-slate-600 flex flex-wrap items-center justify-between gap-2">
+            <span>
+              บันทึกลง Google Sheets ล่าสุด:{' '}
+              <strong className="font-mono-num text-slate-900">
+                {lastSheetsSyncAt || '-'}
+              </strong>
+            </span>
+            {lastSheetsSyncError && (
+              <span className="text-red-700 font-medium">{lastSheetsSyncError}</span>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Restore Confirmation Modal */}

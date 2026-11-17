@@ -14,11 +14,26 @@ import { calculateAssetDepreciation, round2 } from '../utils/depreciation';
 
 const SHEETS_API = 'https://sheets.googleapis.com/v4/spreadsheets';
 
+export class SheetsApiError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'SheetsApiError';
+    this.status = status;
+  }
+}
+
 export interface SpreadsheetMetadata {
   spreadsheetId: string;
   title: string;
   spreadsheetUrl: string;
   sheetNames: string[];
+}
+
+export interface SheetsSyncConfig {
+  locked: boolean;
+  autoSyncEnabled: boolean;
+  intervalSeconds: number;
 }
 
 export function extractSpreadsheetId(input: string): string {
@@ -52,7 +67,7 @@ async function sheetsFetch<T>(
     } catch {
       // ignore JSON parse failure
     }
-    throw new Error(message);
+    throw new SheetsApiError(message, res.status);
   }
   return res.json() as Promise<T>;
 }
@@ -86,7 +101,7 @@ export async function getSpreadsheetMetadata(
   };
 }
 
-const TARGET_TABS = [
+export const TARGET_TABS = [
   'ตั้งค่า',
   'รายการอ้างอิง',
   'ทะเบียนครุภัณฑ์',
@@ -95,6 +110,11 @@ const TARGET_TABS = [
   'สรุปงบประมาณ',
   'GFMIS_เอกสาร5',
 ] as const;
+
+export function hasAllTargetTabs(meta: SpreadsheetMetadata | null | undefined): boolean {
+  if (!meta) return false;
+  return TARGET_TABS.every((tab) => meta.sheetNames.includes(tab));
+}
 
 export async function createAssetWorkbook(
   accessToken: string,
@@ -142,9 +162,27 @@ export async function syncAllToGoogleSheets(
     reference: ReferenceConfig;
     assets: AssetItem[];
     maintenance: MaintenanceRecord[];
+  },
+  options?: {
+    knownMetadata?: SpreadsheetMetadata | null;
   }
 ): Promise<SpreadsheetMetadata> {
-  const meta = await getSpreadsheetMetadata(accessToken, rawIdOrUrl);
+  const targetId = extractSpreadsheetId(rawIdOrUrl);
+  const known = options?.knownMetadata;
+
+  if (known && known.spreadsheetId === targetId && hasAllTargetTabs(known)) {
+    try {
+      await writeAllWorkbookData(accessToken, known.spreadsheetId, payload);
+      return known;
+    } catch (err) {
+      // Only fall back to full metadata check if a sheet/range error (400) occurred
+      if (!(err instanceof SheetsApiError) || err.status !== 400) {
+        throw err;
+      }
+    }
+  }
+
+  const meta = await getSpreadsheetMetadata(accessToken, targetId);
   const missingTabs = TARGET_TABS.filter((tab) => !meta.sheetNames.includes(tab));
 
   if (missingTabs.length > 0) {
@@ -159,7 +197,10 @@ export async function syncAllToGoogleSheets(
   }
 
   await writeAllWorkbookData(accessToken, meta.spreadsheetId, payload);
-  return getSpreadsheetMetadata(accessToken, meta.spreadsheetId);
+  return {
+    ...meta,
+    sheetNames: Array.from(new Set([...meta.sheetNames, ...TARGET_TABS])),
+  };
 }
 
 async function writeAllWorkbookData(
