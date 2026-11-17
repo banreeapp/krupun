@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { Printer, Wrench } from 'lucide-react';
+import { Printer, QrCode, Wrench } from 'lucide-react';
 import {
   AgencySettings,
   AssetItem,
@@ -21,6 +21,7 @@ interface IndividualCardViewProps {
   selectedAssetId: string;
   onSelectAsset: (assetId: string) => void;
   onLogMaintenance: (assetId: string) => void;
+  onOpenQrLabel?: (assetId: string) => void;
 }
 
 export function IndividualCardView({
@@ -31,6 +32,7 @@ export function IndividualCardView({
   selectedAssetId,
   onSelectAsset,
   onLogMaintenance,
+  onOpenQrLabel,
 }: IndividualCardViewProps) {
   const asset =
     assets.find((a) => a.id === selectedAssetId) || assets[0] || null;
@@ -92,7 +94,17 @@ export function IndividualCardView({
           </select>
         </div>
 
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
+          {onOpenQrLabel && (
+            <button
+              type="button"
+              onClick={() => onOpenQrLabel(asset.id)}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium text-emerald-900 bg-emerald-50 border border-emerald-200 rounded-lg hover:bg-emerald-100 whitespace-nowrap"
+            >
+              <QrCode className="w-3.5 h-3.5" />
+              <span>สติกเกอร์ QR (50×30 มม.)</span>
+            </button>
+          )}
           <button
             type="button"
             onClick={() => onLogMaintenance(asset.id)}

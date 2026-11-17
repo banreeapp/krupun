@@ -170,6 +170,7 @@ export type ActiveTab =
   | 'inspection'
   | 'survey'
   | 'doc10'
+  | 'qrlabels'
   | 'disposal'
   | 'budget'
   | 'settings';

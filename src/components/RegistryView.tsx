@@ -4,6 +4,7 @@ import {
   Edit3,
   FileText,
   Plus,
+  QrCode,
   Search,
   Wrench,
 } from 'lucide-react';
@@ -29,6 +30,7 @@ interface RegistryViewProps {
   onEditAsset: (asset: AssetItem) => void;
   onViewIndividual: (assetId: string) => void;
   onLogMaintenance: (assetId: string) => void;
+  onOpenQrLabel?: (assetId: string) => void;
 }
 
 const STATUS_FILTERS: Array<'ทั้งหมด' | AssetStatus> = [
@@ -49,6 +51,7 @@ export function RegistryView({
   onEditAsset,
   onViewIndividual,
   onLogMaintenance,
+  onOpenQrLabel,
 }: RegistryViewProps) {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ทั้งหมด' | AssetStatus>('ทั้งหมด');
@@ -318,6 +321,16 @@ export function RegistryView({
                       </td>
                       <td className="py-2.5 px-3.5 align-top text-right whitespace-nowrap">
                         <div className="inline-flex items-center gap-1">
+                          {onOpenQrLabel && (
+                            <button
+                              type="button"
+                              onClick={() => onOpenQrLabel(asset.id)}
+                              title="สร้างสติกเกอร์ QR Code (50×30 มม.)"
+                              className="p-1.5 text-slate-600 hover:text-emerald-900 hover:bg-emerald-50 rounded-md transition-colors"
+                            >
+                              <QrCode className="w-3.5 h-3.5" />
+                            </button>
+                          )}
                           <button
                             type="button"
                             onClick={() => onViewIndividual(asset.id)}

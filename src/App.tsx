@@ -13,6 +13,7 @@ import {
   Menu,
   Package,
   Plus,
+  QrCode,
   Settings,
   Trash2,
   Wrench,
@@ -50,6 +51,7 @@ import { DepreciationView } from './components/DepreciationView';
 import { InspectionAndGfmisView } from './components/InspectionAndGfmisView';
 import { SurveyReportView } from './components/SurveyReportView';
 import { Doc10ReportView } from './components/Doc10ReportView';
+import { QrLabelStudioView } from './components/QrLabelStudioView';
 import { DisposalView } from './components/DisposalView';
 import { BudgetSummaryView } from './components/BudgetSummaryView';
 import { SettingsAndReferenceView } from './components/SettingsAndReferenceView';
@@ -88,6 +90,7 @@ const NAV_ITEMS: Array<{
   { id: 'inspection', label: 'ตรวจสอบพัสดุ & GFMIS', icon: ClipboardCheck },
   { id: 'survey', label: 'แบบสำรวจครุภัณฑ์ประจำปี', icon: ClipboardList },
   { id: 'doc10', label: 'บัญชีรายงานครุภัณฑ์ (เอกสาร 10)', icon: FileCheck2 },
+  { id: 'qrlabels', label: 'QR Code ครุภัณฑ์ (50×30 มม.)', icon: QrCode },
   { id: 'disposal', label: 'ชำรุดเสนอจำหน่าย', icon: Trash2 },
   { id: 'budget', label: 'สรุปงบประมาณ & กราฟ', icon: BarChart3 },
   { id: 'settings', label: 'ตั้งค่า & รายการอ้างอิง', icon: Settings },
@@ -115,10 +118,27 @@ export default function App() {
       loadFromStorage(STORAGE_KEYS.SHEET_META, null)
     );
 
-  // Selected asset for Individual Card view
+  // Selected asset for Individual Card view & QR Code Studio
   const [selectedAssetId, setSelectedAssetId] = useState<string>(
     () => assets[0]?.id || ''
   );
+  const [qrTargetAssetId, setQrTargetAssetId] = useState<string | undefined>(
+    undefined
+  );
+
+  // Support scanning QR code URL (?asset=...) to jump directly to Individual Asset Card
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const assetParam = params.get('asset');
+    if (!assetParam) return;
+    const match = assets.find(
+      (a) => a.assetCode === assetParam || a.id === assetParam
+    );
+    if (match) {
+      setSelectedAssetId(match.id);
+      setActiveTab('individual');
+    }
+  }, [assets]);
 
   // Modals state
   const [assetModalOpen, setAssetModalOpen] = useState(false);
@@ -194,6 +214,12 @@ export default function App() {
   const handleNavigate = (tab: ActiveTab, assetId?: string) => {
     if (assetId) setSelectedAssetId(assetId);
     setActiveTab(tab);
+    setMobileMenuOpen(false);
+  };
+
+  const handleOpenQrLabel = (assetId: string) => {
+    setQrTargetAssetId(assetId);
+    setActiveTab('qrlabels');
     setMobileMenuOpen(false);
   };
 
@@ -559,6 +585,7 @@ export default function App() {
                 setPreselectedMaintAssetId(id);
                 setMaintModalOpen(true);
               }}
+              onOpenQrLabel={handleOpenQrLabel}
             />
           )}
 
@@ -593,6 +620,7 @@ export default function App() {
                 setPreselectedMaintAssetId(assetId);
                 setMaintModalOpen(true);
               }}
+              onOpenQrLabel={handleOpenQrLabel}
             />
           )}
 
@@ -625,6 +653,15 @@ export default function App() {
               settings={settings}
               reference={reference}
               assets={assets}
+            />
+          )}
+
+          {activeTab === 'qrlabels' && (
+            <QrLabelStudioView
+              settings={settings}
+              reference={reference}
+              assets={assets}
+              initialAssetId={qrTargetAssetId}
             />
           )}
 
