@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "banree-asset-registry",
+  "name": "krupun",
   "compatibility_date": "2026-11-17",
   "assets": {
     "directory": "./dist",

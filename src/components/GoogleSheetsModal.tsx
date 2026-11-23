@@ -59,6 +59,8 @@ interface GoogleSheetsModalProps {
   onUnlockSheetsConfig: () => void;
   onPauseAutoSync: () => void;
   onSyncNow: () => Promise<void>;
+  onRecordSyncSuccess: () => void;
+  onRecordSyncError: (message: string) => void;
   settings: AgencySettings;
   reference: ReferenceConfig;
   assets: AssetItem[];
@@ -144,6 +146,8 @@ export function GoogleSheetsModal({
   onUnlockSheetsConfig,
   onPauseAutoSync,
   onSyncNow,
+  onRecordSyncSuccess,
+  onRecordSyncError,
   settings,
   reference,
   assets,
@@ -197,6 +201,7 @@ export function GoogleSheetsModal({
     try {
       const meta = await getSpreadsheetMetadata(accessToken, sheetUrlInput);
       onSetConnectedSheet(meta);
+      onRecordSyncSuccess();
       setStatusMessage({
         type: 'success',
         text: `เชื่อมต่อไฟล์ "${meta.title}" สำเร็จ (พบ ${meta.sheetNames.length} แผ่นงาน)`,
@@ -204,15 +209,20 @@ export function GoogleSheetsModal({
     } catch (err: any) {
       if (isInsufficientScopeError(err)) {
         onMarkMissingScope();
+        const errText =
+          'บัญชี Google ยังไม่ได้อนุญาตสิทธิ์เข้าถึง Google Sheets (Request had insufficient authentication scopes)';
+        onRecordSyncError(errText);
         setStatusMessage({
           type: 'error',
           isScopeError: true,
-          text: 'บัญชี Google ยังไม่ได้อนุญาตสิทธิ์เข้าถึง Google Sheets (Request had insufficient authentication scopes)',
+          text: errText,
         });
       } else {
+        const errText = err?.message || 'ไม่สามารถอ่านข้อมูล Google Sheets ได้';
+        onRecordSyncError(errText);
         setStatusMessage({
           type: 'error',
-          text: err?.message || 'ไม่สามารถอ่านข้อมูล Google Sheets ได้',
+          text: errText,
         });
       }
     } finally {
@@ -256,6 +266,7 @@ export function GoogleSheetsModal({
         });
         onSetConnectedSheet(created);
         setSheetUrlInput(created.spreadsheetId);
+        onRecordSyncSuccess();
         setStatusMessage({
           type: 'success',
           text: `สร้างและส่งออกข้อมูลไปยัง Google Sheets "${created.title}" เรียบร้อยแล้ว`,
@@ -268,6 +279,7 @@ export function GoogleSheetsModal({
           { knownMetadata: connectedSheet }
         );
         onSetConnectedSheet(updated);
+        onRecordSyncSuccess();
         setStatusMessage({
           type: 'success',
           text: `อัปเดตข้อมูลทั้ง ${assets.length} รายการ และประวัติซ่อม ${maintenance.length} รายการ ลง Google Sheets เรียบร้อยแล้ว`,
@@ -281,6 +293,7 @@ export function GoogleSheetsModal({
         );
         onSetConnectedSheet(pulled.metadata);
         onApplyPulledData(pulled);
+        onRecordSyncSuccess();
         setStatusMessage({
           type: 'success',
           text: `นำเข้าข้อมูลจาก "${pulled.metadata.title}" สำเร็จ (ครุภัณฑ์ ${
@@ -297,15 +310,21 @@ export function GoogleSheetsModal({
     } catch (err: any) {
       if (isInsufficientScopeError(err)) {
         onMarkMissingScope();
+        const errText =
+          'บัญชี Google ยังไม่ได้อนุญาตสิทธิ์เข้าถึง Google Sheets (Request had insufficient authentication scopes)';
+        onRecordSyncError(errText);
         setStatusMessage({
           type: 'error',
           isScopeError: true,
-          text: 'บัญชี Google ยังไม่ได้อนุญาตสิทธิ์เข้าถึง Google Sheets (Request had insufficient authentication scopes)',
+          text: errText,
         });
       } else {
+        const errText =
+          err?.message || 'เกิดข้อผิดพลาดในการเชื่อมต่อ Google Sheets';
+        onRecordSyncError(errText);
         setStatusMessage({
           type: 'error',
-          text: err?.message || 'เกิดข้อผิดพลาดในการเชื่อมต่อ Google Sheets',
+          text: errText,
         });
       }
     } finally {

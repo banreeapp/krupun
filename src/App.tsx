@@ -66,6 +66,18 @@ import { AssetFormModal } from './components/AssetFormModal';
 import { MaintenanceFormModal } from './components/MaintenanceFormModal';
 import { GoogleSheetsModal } from './components/GoogleSheetsModal';
 import { ConfirmModal } from './components/ConfirmModal';
+import { SheetsStatusBar } from './components/SheetsStatusBar';
+
+function formatSyncTimestamp(): string {
+  const now = new Date();
+  const datePart = now.toLocaleDateString('th-TH', {
+    day: 'numeric',
+    month: 'short',
+    year: '2-digit',
+  });
+  const timePart = now.toLocaleTimeString('th-TH', { hour12: false });
+  return `${datePart} ${timePart} น.`;
+}
 
 const STORAGE_KEYS = {
   SETTINGS: 'thai_asset_settings_v1',
@@ -404,9 +416,7 @@ export default function App() {
         { knownMetadata: current.connectedSheet }
       );
       setConnectedSheet(updated);
-      const nowLabel =
-        new Date().toLocaleTimeString('th-TH', { hour12: false }) + ' น.';
-      setLastSheetsSyncAt(nowLabel);
+      setLastSheetsSyncAt(formatSyncTimestamp());
       setNextAutoSyncAt(
         Date.now() + current.sheetsSyncConfig.intervalSeconds * 1000
       );
@@ -537,6 +547,12 @@ export default function App() {
       ) {
         setShowResumeAutoSyncConfirm(true);
       }
+    } catch (err) {
+      const msg =
+        err instanceof Error
+          ? err.message
+          : 'ไม่สามารถเข้าสู่ระบบบัญชี Google ได้';
+      setLastSheetsSyncError(msg);
     } finally {
       setIsLoggingIn(false);
     }
@@ -551,6 +567,7 @@ export default function App() {
     setSessionAutoSyncConfirmed(false);
     setShowResumeAutoSyncConfirm(false);
     setNextAutoSyncAt(null);
+    setLastSheetsSyncError(null);
   };
 
   const handleApplyPulledData = (pulled: {
@@ -792,6 +809,33 @@ export default function App() {
           </div>
         </header>
 
+        {/* Top Google Sheets Connection & Sync Status Bar (visible on every screen) */}
+        <SheetsStatusBar
+          needsAuth={needsAuth}
+          accessToken={accessToken}
+          hasSheetsScope={hasSheetsScope}
+          userEmail={user?.email}
+          connectedSheet={connectedSheet}
+          sheetsSyncConfig={sheetsSyncConfig}
+          sessionAutoSyncConfirmed={sessionAutoSyncConfirmed}
+          isSyncing={isAutoSyncing}
+          lastSheetsSyncAt={lastSheetsSyncAt}
+          lastSheetsSyncError={lastSheetsSyncError}
+          nextAutoSyncAt={nextAutoSyncAt}
+          isLoggingIn={isLoggingIn}
+          onSignIn={handleGoogleSignIn}
+          onOpenModal={() => setSheetsModalOpen(true)}
+          onSyncNow={() => {
+            if (sessionAutoSyncConfirmed) {
+              void executeSheetsSyncNow().catch(() => {
+                // error already stored in lastSheetsSyncError
+              });
+            } else {
+              setSheetsModalOpen(true);
+            }
+          }}
+        />
+
         {/* Main Viewport */}
         <main className="flex-1 p-4 lg:p-6 max-w-[1440px] w-full mx-auto">
           {activeTab === 'overview' && (
@@ -1020,6 +1064,13 @@ export default function App() {
         onUnlockSheetsConfig={handleUnlockSheetsConfig}
         onPauseAutoSync={handlePauseAutoSync}
         onSyncNow={executeSheetsSyncNow}
+        onRecordSyncSuccess={() => {
+          setLastSheetsSyncError(null);
+          setLastSheetsSyncAt(formatSyncTimestamp());
+        }}
+        onRecordSyncError={(msg) => {
+          setLastSheetsSyncError(msg);
+        }}
         settings={settings}
         reference={reference}
         assets={assets}
